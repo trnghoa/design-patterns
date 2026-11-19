@@ -1,7 +1,7 @@
 /*
  * @(#)Product.java
  *
- * Copyright 2026 by esoft systems (tm).
+ * Copyright 2026 by hoa.tn.
  * All rights reserved.
  */
 package hoa.tran.patterns.creations.builder;
