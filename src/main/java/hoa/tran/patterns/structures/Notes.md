@@ -1,6 +1,8 @@
 # Structure Pattern
 1. Composite pattern: Treat a single object and a group of objects in the same way, by building them into a tree
 2. Proxy pattern: Put a stand-in object in front of the real one, with the same interface, to control access to it (cache, lazy load, security check, logging)
+3. Adapter pattern: Wrap a class whose interface does not fit, so it can be used through the interface your code expects
+4. Decorator pattern: Wrap an object in another object with the same interface to add behaviour, without changing the original class
 
 The diagrams below use [Mermaid](https://mermaid.js.org/syntax/classDiagram.html). They render on GitHub and in most Markdown previews.
 
@@ -179,3 +181,184 @@ Think of a personal assistant who sits in front of a busy manager. You ask the a
 - In Spring you rarely write proxies by hand. `@Cacheable`, `@Transactional` and `@Async` work by wrapping your bean in a generated proxy.
 
 **Proxy vs Decorator:** both wrap an object that has the same interface. A proxy controls *access* to the object, and usually creates or owns it. A decorator adds *new behaviour*, and decorators are often stacked on top of each other.
+
+---
+
+## 3. Adapter pattern
+
+Code: `adapter/`
+
+```mermaid
+classDiagram
+    class ListingSource {
+        <<interface>>
+        +fetchListings(city) List~Listing~
+    }
+
+    class Listing {
+        <<record>>
+        +String address
+        +double areaSqm
+        +double priceEur
+    }
+
+    class DanishListingSource {
+        +fetchListings(city) List~Listing~
+    }
+
+    class UsMlsListingAdapter {
+        -UsMlsClient client
+        -double eurPerUsd
+        +UsMlsListingAdapter(client, eurPerUsd)
+        +fetchListings(city) List~Listing~
+        -toListing(mlsRecord) Listing
+    }
+
+    class UsMlsClient {
+        +searchByCity(cityName) List~MlsRecord~
+    }
+
+    class MlsRecord {
+        <<record>>
+        +String streetLine
+        +String city
+        +int squareFeet
+        +long priceUsdCents
+    }
+
+    class AdapterDemo {
+        +main(args)$
+    }
+
+    ListingSource <|.. DanishListingSource : already fits
+    ListingSource <|.. UsMlsListingAdapter : adapter
+    UsMlsListingAdapter o-- UsMlsClient : adaptee
+    UsMlsClient ..> MlsRecord : returns
+    ListingSource ..> Listing : returns
+    AdapterDemo ..> ListingSource : uses
+```
+
+What the adapter translates:
+
+| Our app (`ListingSource`, `Listing`) | US partner (`UsMlsClient`, `MlsRecord`) | Conversion in the adapter |
+|---|---|---|
+| `fetchListings(city)` | `searchByCity(cityName)` | Call the other method name |
+| `address` | `streetLine` + `city` | Join with `", "` |
+| `areaSqm` | `squareFeet` | × 0.09290304 |
+| `priceEur` | `priceUsdCents` | ÷ 100, then × EUR/USD rate |
+
+Output of `AdapterDemo`:
+
+```
+Copenhagen:
+  Nyhavn 12, Copenhagen       85.0 m2   450,000.00 EUR
+  Strøget 7, Copenhagen      120.0 m2   690,000.00 EUR
+Boston:
+  221 Baker Ave, Boston      111.5 m2   414,000.00 EUR
+  10 Ocean Dr, Boston        232.3 m2 1,104,000.00 EUR
+```
+
+**How it works**
+
+Think of a travel plug adapter. Your laptop charger has a European plug and the wall socket is American. You don't rewire the charger or the wall. You put a small adapter in between, and both sides stay as they are.
+
+- `ListingSource` is the **target**: the interface our application expects. The report code in `AdapterDemo` only knows this interface.
+- `DanishListingSource` already returns our `Listing` format, so it implements `ListingSource` directly.
+- `UsMlsClient` is the **adaptee**: a third-party class we cannot change. Its method name is different, and it returns square feet and US cents.
+- `UsMlsListingAdapter` is the **adapter**. It implements `ListingSource`, holds a `UsMlsClient`, and in `fetchListings()` it calls `searchByCity()` and converts each `MlsRecord` into a `Listing`.
+- The report code reads Danish and US listings the same way. To add another partner, you write another adapter. The report code and the partner's client stay unchanged.
+
+**When to use it:** you need to use an existing class (a third-party library, a legacy system, a partner API) but its interface or data format doesn't match what your code expects.
+
+**Watch out:** keep the adapter to translation only. If it starts making business decisions, that logic is hidden in a place nobody expects. In this sample, the exchange rate is passed in from outside instead of being fixed in the adapter.
+
+**Adapter vs Proxy:** a proxy has the *same* interface as the object it wraps and controls access to it. An adapter *changes* the interface so that something that doesn't fit can be used.
+
+---
+
+## 4. Decorator pattern
+
+Code: `decorator/`
+
+Business rule: the product costs $5 per unit. When the order total is more than $20, the client gets 5% off. An order of exactly $20 gets no discount.
+
+```mermaid
+classDiagram
+    class Order {
+        <<interface>>
+        +getTotal() BigDecimal
+        +describe() String
+    }
+
+    class ProductOrder {
+        -int quantity
+        +ProductOrder(quantity)
+        +getTotal() BigDecimal
+        +describe() String
+    }
+
+    class OrderDecorator {
+        <<abstract>>
+        #Order wrapped
+        #OrderDecorator(wrapped)
+        +getTotal() BigDecimal
+        +describe() String
+    }
+
+    class VolumeDiscountDecorator {
+        +VolumeDiscountDecorator(wrapped)
+        +getTotal() BigDecimal
+        +describe() String
+        -getDiscount() BigDecimal
+    }
+
+    class DecoratorDemo {
+        +main(args)$
+    }
+
+    Order <|.. ProductOrder : concrete component
+    Order <|.. OrderDecorator : decorator
+    OrderDecorator <|-- VolumeDiscountDecorator : concrete decorator
+    OrderDecorator o-- Order : wraps
+    DecoratorDemo ..> Order : uses
+```
+
+How the objects are wrapped:
+
+```mermaid
+flowchart LR
+    Caller -->|getTotal| Discount["VolumeDiscountDecorator<br/>$25.00 - 5% = $23.75"]
+    Discount -->|getTotal| Plain["ProductOrder<br/>5 x $5.00 = $25.00"]
+```
+
+Output of `DecoratorDemo`:
+
+```
+Plain order:
+  5 x $5.00 = $25.00
+With volume discount:
+  3 x $5.00 = $15.00 (no discount, total not over $20.00)
+  4 x $5.00 = $20.00 (no discount, total not over $20.00)
+  5 x $5.00 = $25.00 - 5% discount $1.25 = $23.75
+  10 x $5.00 = $50.00 - 5% discount $2.50 = $47.50
+```
+
+**How it works**
+
+Think of gift wrapping. The present inside stays the same. Each layer of wrapping adds something on the outside, and from the outside it is still "a present" you can hand over.
+
+- `Order` is the **component** interface. Anything with a total price implements it.
+- `ProductOrder` is the **concrete component**. It knows only the basic price: quantity × $5.
+- `OrderDecorator` is the base **decorator**. It implements `Order` and holds another `Order` inside. By default it passes every call through.
+- `VolumeDiscountDecorator` is a **concrete decorator**. It asks the wrapped order for its total, and if that is more than $20 it takes 5% off.
+- `ProductOrder` is never changed. The discount is added from outside: `new VolumeDiscountDecorator(new ProductOrder(5))`. The caller still sees an `Order`.
+- More rules can be stacked the same way. For example, a `TaxDecorator` could wrap the discounted order: `new TaxDecorator(new VolumeDiscountDecorator(new ProductOrder(5)))`. Each rule stays in its own small class.
+
+**When to use it:** you want to add optional behaviour (discounts, taxes, fees, logging, compression) to an object, and pick or combine these at runtime, without changing the original class or making a subclass for every combination.
+
+**Watch out:**
+- Order matters when you stack decorators. "Discount then tax" and "tax then discount" can give different totals.
+- Money uses `BigDecimal`, not `double`, so values like $23.75 stay exact.
+- Java's own I/O classes use this pattern: `new BufferedReader(new InputStreamReader(inputStream))`.
+
+**Decorator vs Proxy:** both wrap an object with the same interface. A decorator adds behaviour and is meant to be stacked. A proxy controls access to the object (cache, security, lazy loading).
