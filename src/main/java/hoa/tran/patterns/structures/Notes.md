@@ -3,6 +3,7 @@
 2. Proxy pattern: Put a stand-in object in front of the real one, with the same interface, to control access to it (cache, lazy load, security check, logging)
 3. Adapter pattern: Wrap a class whose interface does not fit, so it can be used through the interface your code expects
 4. Decorator pattern: Wrap an object in another object with the same interface to add behaviour, without changing the original class
+5. Facade pattern: Give one simple entry point to a group of classes, so callers do not need to know how they work together
 
 The diagrams below use [Mermaid](https://mermaid.js.org/syntax/classDiagram.html). They render on GitHub and in most Markdown previews.
 
@@ -362,3 +363,139 @@ Think of gift wrapping. The present inside stays the same. Each layer of wrappin
 - Java's own I/O classes use this pattern: `new BufferedReader(new InputStreamReader(inputStream))`.
 
 **Decorator vs Proxy:** both wrap an object with the same interface. A decorator adds behaviour and is meant to be stacked. A proxy controls access to the object (cache, security, lazy loading).
+
+---
+
+## 5. Facade pattern
+
+Code: `facade/`
+
+```mermaid
+classDiagram
+    class OrderFacade {
+        -InventoryService inventory
+        -PaymentService payment
+        -ShippingService shipping
+        -NotificationService notification
+        +OrderFacade(inventory, payment, shipping, notification)
+        +placeOrder(customerId, productId, quantity, address) OrderResult
+    }
+
+    class InventoryService {
+        +addStock(productId, quantity)
+        +getStock(productId) int
+        +reserve(productId, quantity) boolean
+        +release(productId, quantity)
+    }
+
+    class PaymentService {
+        +charge(customerId, amount) boolean
+    }
+
+    class ShippingService {
+        +ship(productId, quantity, address) String
+    }
+
+    class NotificationService {
+        +send(customerId, message)
+    }
+
+    class OrderResult {
+        <<record>>
+        +boolean success
+        +String trackingNumber
+        +String message
+    }
+
+    class FacadeDemo {
+        +main(args)$
+    }
+
+    FacadeDemo ..> OrderFacade : one call
+    OrderFacade o-- InventoryService
+    OrderFacade o-- PaymentService
+    OrderFacade o-- ShippingService
+    OrderFacade o-- NotificationService
+    OrderFacade ..> OrderResult : returns
+```
+
+What `placeOrder()` does behind the one call:
+
+```mermaid
+flowchart TD
+    Start["placeOrder()"] --> Reserve{"Reserve stock?"}
+    Reserve -- no --> OutOfStock["Email: out of stock<br/>Return: Out of stock"]
+    Reserve -- yes --> Charge{"Charge card?"}
+    Charge -- no --> Release["Put stock back<br/>Email: payment declined<br/>Return: Payment declined"]
+    Charge -- yes --> Ship["Book shipping"] --> Notify["Email: tracking number<br/>Return: Order placed"]
+```
+
+Output of `FacadeDemo`:
+
+```
+Successful order:
+  [inventory] reserved 10 x PHOTO-PACK
+  [payment]   charged $50.00 to alice
+  [shipping]  10 x PHOTO-PACK to 12 Harbour Street, tracking TRK-1001
+  [email]     to alice: Your order is on its way. Tracking: TRK-1001
+  => Order placed (TRK-1001)
+Out of stock (only 290 left):
+  [email]     to bob: Sorry, PHOTO-PACK is out of stock.
+  => Out of stock
+Payment declined ($1,250 is over the $1,000 limit):
+  [inventory] reserved 250 x PHOTO-PACK
+  [payment]   declined $1250.00 for carol
+  [inventory] released 250 x PHOTO-PACK
+  [email]     to carol: Your payment of $1250.00 was declined.
+  => Payment declined
+Stock left: 290
+```
+
+**How it works**
+
+Think of a hotel reception desk. You ask for a room, and the receptionist deals with housekeeping, billing and the key cards for you. You don't need to know who those people are or in what order to ask them.
+
+- `InventoryService`, `PaymentService`, `ShippingService` and `NotificationService` are the **subsystem**. Each does one job and knows nothing about the others.
+- `OrderFacade` is the **facade**. Its single method `placeOrder()` calls the services in the right order: reserve stock, charge the card, book shipping, send an email.
+- The facade also handles the failure cases. If stock is short, nothing is charged. If the card is declined, the reserved stock is put back.
+- `FacadeDemo` makes one call per order. It never talks to the four services directly, so the rules about their order live in one place.
+- The services are still public. Code that needs something special, such as a stock report, can use `InventoryService` directly.
+
+**When to use it:** a task needs several classes called in a fixed order, and you don't want every caller to repeat (and maybe get wrong) that sequence. A Spring `@Service` that coordinates several repositories and clients is usually a facade.
+
+**Watch out:** a facade can grow into a "god class" that does everything. Keep each facade to one area, such as ordering, and keep the real work inside the subsystem classes.
+
+**Facade vs Adapter:** an adapter makes *one* class fit an interface you already have. A facade creates a *new, simpler* interface over *several* classes.
+
+---
+
+## Proxy vs Decorator
+
+The two patterns look the same in code. Both classes implement the same interface as the object they wrap, hold a reference to it, and forward calls to it. The difference is in **why** they wrap it.
+
+```java
+// Proxy (proxy/)
+ImageStorage storage = new CachingImageStorageProxy(new RemoteImageStorage());
+
+// Decorator (decorator/)
+Order order = new VolumeDiscountDecorator(new ProductOrder(5));
+```
+
+| | Proxy | Decorator |
+|---|---|---|
+| Main purpose | Control **access** to the object | Add **behaviour** to the object |
+| Question it answers | "Should this call reach the real object, and when?" | "What extra should happen on top of the result?" |
+| Effect on the result | Same result as the real object. The caller shouldn't notice any difference except speed, security or logs | Changed or extended result. In our sample the total goes from $25.00 to $23.75 |
+| Does it always call the wrapped object? | No. It may skip the call (cache hit, access denied) or delay it (lazy loading) | Yes, almost always. It calls the wrapped object, then adds its own part |
+| Stacking | Usually one proxy per object | Made to be stacked: `new Tax(new Discount(new ProductOrder(5)))` |
+| Who creates the wrapped object | Often the proxy itself, or the framework. The caller may not know a proxy exists | The caller, who picks which decorators to add, in which order |
+| Can the caller choose to leave it out? | Usually not. It is put in place for the caller | Yes. Each decorator is an optional add-on |
+| Typical uses | Caching, lazy loading, permission checks, remote calls, logging | Discounts, taxes, fees, formatting, compression, buffering |
+| Sample in this project | `CachingImageStorageProxy`: a repeat download returns the saved copy and skips `RemoteImageStorage` | `VolumeDiscountDecorator`: always asks `ProductOrder` for its total, then takes off 5% |
+| Java / Spring examples | Spring `@Cacheable`, `@Transactional`, `@Async`. Hibernate lazy-loaded entities. `java.lang.reflect.Proxy` | `BufferedReader(new InputStreamReader(...))`. `GZIPOutputStream(new FileOutputStream(...))` |
+
+**A quick test:** ask what the wrapper changes.
+- If it changes **whether, when or how** the real call happens, but not the answer, it is a **proxy**.
+- If it changes **the answer itself** by adding something, it is a **decorator**.
+
+Some wrappers sit between the two. A logging wrapper, for example, is called a proxy when it is generated for you, as with Spring AOP. It is called a decorator when you add it by hand as an optional layer. Use the name that best explains your intent to the next reader.
