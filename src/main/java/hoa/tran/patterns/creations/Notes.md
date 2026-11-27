@@ -2,6 +2,7 @@
 1. Builder pattern: Support to build a complex object, building the object step by step
 2. Factory method pattern: Flexible to build the object and easy to extends
 3. Singleton pattern: Only one instance global
+4. Prototype pattern: Create new objects by copying a ready-made one
 
 The diagrams below use [Mermaid](https://mermaid.js.org/syntax/classDiagram.html). They render on GitHub and in most Markdown previews.
 
@@ -173,7 +174,7 @@ Think of a restaurant with several kitchens. The ordering process is the same fo
 
 ## 3. Singleton pattern
 
-Code: not in this package yet. The sample below is a suggestion that fits the same product theme.
+Code: `singleton/`
 
 ```mermaid
 classDiagram
@@ -186,36 +187,15 @@ classDiagram
         +priceOf(productName) double
     }
 
-    class PictureProductCreator
-    class FloorplanProductCreator
+    class SingletonDemo {
+        +main(args)$
+    }
 
     PriceList --> PriceList : INSTANCE
-    PictureProductCreator ..> PriceList : getInstance()
-    FloorplanProductCreator ..> PriceList : getInstance()
+    SingletonDemo ..> PriceList : getInstance()
 ```
 
-Sample code:
-
-```java
-public final class PriceList {
-  private static final PriceList INSTANCE = new PriceList();
-
-  private final Map<String, Double> prices = Map.of(
-      "Property photos", 15.0,
-      "2D floor plan", 40.0);
-
-  private PriceList() {
-  }
-
-  public static PriceList getInstance() {
-    return INSTANCE;
-  }
-
-  public double priceOf(String productName) {
-    return prices.get(productName);
-  }
-}
-```
+`SingletonDemo` asks for the price list from two places (checkout and invoice) and from 1000 threads at once. Every call returns the same object, and "PriceList created" prints only once.
 
 **How it works**
 
@@ -228,3 +208,60 @@ Think of the one official price list in a company. Everyone looks at the same co
 **When to use it:** you need exactly one shared object for the whole application, such as configuration, a cache, or a connection pool.
 
 **Watch out:** a singleton is global state. It makes unit testing harder because tests cannot easily swap it for a fake. In Spring, a normal `@Component` bean is already a single shared instance, so you rarely need to write this pattern by hand.
+
+---
+
+## 4. Prototype pattern
+
+Code: `prototype/`
+
+```mermaid
+classDiagram
+    class Prototype~T~ {
+        <<interface>>
+        +copy() T
+    }
+
+    class EditingPreset {
+        -String name
+        -String colourStyle
+        -List services
+        +EditingPreset(name, colourStyle, services)
+        -EditingPreset(source)
+        +copy() EditingPreset
+        +rename(name) EditingPreset
+        +colourStyle(style) EditingPreset
+        +addService(service) EditingPreset
+        +removeService(service) EditingPreset
+    }
+
+    class PresetRegistry {
+        -Map prototypes
+        +register(key, preset)
+        +get(key) EditingPreset
+    }
+
+    class PrototypeDemo {
+        +main(args)$
+    }
+
+    Prototype <|.. EditingPreset
+    PresetRegistry o-- EditingPreset : stores originals
+    PresetRegistry ..> EditingPreset : copy()
+    PrototypeDemo ..> PresetRegistry : uses
+```
+
+**How it works**
+
+Think of a document template. You don't write a new contract from scratch each time. You copy the template, change the customer name, and leave the template as it was.
+
+- `EditingPreset` is the template: a colour style plus a list of AI services. It can copy itself through `copy()`.
+- `PresetRegistry` stores ready-made presets ("standard", "luxury") under a name. `get()` never returns the stored original, only a fresh copy.
+- Each customer gets a copy and adjusts it: `registry.get("luxury").rename("Nordic Homes - Luxury").addService("straightening")`. The "luxury" preset in the registry stays the same.
+- `copy()` uses a private copy constructor that creates a **new** `services` list. If it reused the same list (a shallow copy), adding a service to one customer's preset would also add it to the template and to every other copy. `PrototypeTest` checks for exactly this bug.
+
+**When to use it:** setting up an object takes many steps or is expensive (loading config, calling a service), and you need many similar objects that differ in a few values.
+
+**Why not `Cloneable`?** Java's built-in `Object.clone()` makes a shallow copy, throws a checked exception, and skips constructors. A small `copy()` method with a copy constructor is clearer and easier to get right.
+
+**Singleton vs Prototype:** a singleton makes sure there is only **one** object and everyone shares it. A prototype hands out a **new** copy every time, so each caller can change its own without affecting others. In Spring these are the two main bean scopes: `singleton` (the default) and `prototype`.
